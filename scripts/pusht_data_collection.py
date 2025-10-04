@@ -14,7 +14,7 @@ import matplotlib.patches as patches
 def get_auto_index(dataset_dir, dataset_name_prefix='', data_suffix='hdf5'):
     os.makedirs(dataset_dir, exist_ok=True)
     for i in range(10000):
-        path = os.path.join(dataset_dir, f'{dataset_name_prefix}_episode_{i}.{data_suffix}')
+        path = os.path.join(dataset_dir, f'{dataset_name_prefix}episode_{i}.{data_suffix}')
         if not os.path.isfile(path):
             return i
     raise RuntimeError("Too many episodes (>10000)")
@@ -55,9 +55,8 @@ class EnvViewer:
 
 
 class KeyboardController:
-    """Keyboard input handler"""
     def __init__(self):
-        self.action_scale = 10.0  # Movement step size for [0, 512] range
+        self.action_scale = 10.0  
     def start(self):
         print("Keyboard Controls:")
         print("  w/a/s/d: Move agent")
@@ -97,10 +96,9 @@ class KeyboardController:
 
 
 class MouseController:
-    """Matplotlib-based mouse controller"""
     def __init__(self, action_callback):
         self.action_callback = action_callback
-        self.current_pos = np.array([256.0, 256.0])  # Start at center of [0, 512] range
+        self.current_pos = np.array([256.0, 256.0])  
         self.action_scale = 1.0
         self.dragging = False
         self.last_pos = None
@@ -124,11 +122,6 @@ class MouseController:
         self.fig.canvas.mpl_connect('button_release_event', self.on_mouse_release)
         self.fig.canvas.mpl_connect('key_press_event', self.on_key_press)
         plt.show(block=False)
-        print("Mouse Controls:")
-        print("  Click and drag to move agent")
-        print("  Right-click: Place T and save data")
-        print("  Middle-click: Reset episode")
-        print("  Keyboard: W/A/S/D, Space=Place, R=Reset, Q=Quit")
 
     def on_mouse_press(self, event):
         if event.inaxes != self.ax: return
@@ -200,7 +193,6 @@ class MouseController:
 
 
 class PushTDataCollector:
-    """Main data collection class for PushT environment"""
     def __init__(self, save_img_obs=False, data_dir="data", use_mouse=False, max_fps=30):
         self.save_img_obs = save_img_obs
         self.data_dir = data_dir
@@ -208,32 +200,34 @@ class PushTDataCollector:
         self.env = None
         self.controller = None
         self.mouse_controller = None
-        self.viewer = EnvViewer(max_fps=max_fps)  # fast viewer
+        self.viewer = EnvViewer(max_fps=max_fps)
+        
+        if self.save_img_obs:
+            print("Image observation saving is ENABLED - images will be saved to dataset")
+        else:
+            print("Image observation saving is DISABLED - only state data will be saved")
 
         self.episode_data = {
             'observations': [],
             'actions': [],
             'rewards': [],
-            't_positions': [],  # T object positions
+            't_positions': [],  
             'images': [] if save_img_obs else None
         }
         self.episode_count = 0
         self.total_steps = 0
         self.successful_placements = 0
         os.makedirs(data_dir, exist_ok=True)
-        self.last_reward = 0.0  # keep last reward for HUD/success check
+        self.last_reward = 0.0  
 
     def setup_environment(self):
         print("Initializing PushT environment...")
-        # Use rgb_array for fast user-managed rendering
         self.env = gym.make("gym_pusht/PushT-v0", render_mode="rgb_array")
         
-        # Remove the TimeLimit wrapper by unwrapping it
         while hasattr(self.env, 'env') and hasattr(self.env, 'spec') and self.env.spec.max_episode_steps == 300:
             print(f"Removing TimeLimit wrapper: {type(self.env).__name__}")
             self.env = self.env.env
         
-        # Now wrap with our own TimeLimit with higher step count
         from gymnasium.wrappers import TimeLimit
         self.env = TimeLimit(self.env, max_episode_steps=10000)
         print("Environment max episode steps set to 10000")
@@ -250,15 +244,14 @@ class PushTDataCollector:
         self.pending_action = (action_type, action)
 
     def is_successful_placement(self, observation, info):
-        # Prefer info['reward'] if provided, otherwise last_reward
         r = info.get('reward', self.last_reward) if isinstance(info, dict) else self.last_reward
         return r >= 0.95
 
     def save_episode_data(self, episode_data, success=False):
-        # Get auto index for episode numbering
-        episode_index = get_auto_index(self.data_dir, dataset_name_prefix='pusht', data_suffix='hdf5')
+        episode_index = get_auto_index(self.data_dir, dataset_name_prefix='', data_suffix='hdf5')
         filename = f"episode_{episode_index}.hdf5"
         filepath = os.path.join(self.data_dir, filename)
+        print(f"Saving episode {episode_index} to {filepath}")
         with h5py.File(filepath, 'w') as f:
             f.attrs['episode_id'] = episode_index
             f.attrs['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -267,12 +260,15 @@ class PushTDataCollector:
             f.attrs['save_img_obs'] = self.save_img_obs
             f.create_dataset('observations', data=np.array(episode_data['observations']))
             f.create_dataset('actions', data=np.array(episode_data['actions']))
-            # Reshape rewards to (num_steps, 1) for consistency
             rewards_array = np.array(episode_data['rewards']).reshape(-1, 1)
             f.create_dataset('rewards', data=rewards_array)
             f.create_dataset('t_positions', data=np.array(episode_data['t_positions']))
             if self.save_img_obs and episode_data['images']:
-                f.create_dataset('images', data=np.array(episode_data['images']))
+                images_array = np.array(episode_data['images'])
+                f.create_dataset('images', data=images_array)
+                print(f"Saved {len(episode_data['images'])} images with shape {images_array.shape}")
+            elif self.save_img_obs and not episode_data['images']:
+                print("Warning: Image saving enabled but no images collected")
         print(f"Episode {self.episode_count} saved to {filepath}")
         if success:
             print("Successful placement detected!")
@@ -287,7 +283,6 @@ class PushTDataCollector:
         }
 
     def _render_and_show(self, info=None):
-        # pull rgb frame from env and show with HUD
         try:
             frame = self.env.render()
             r = None
@@ -311,7 +306,6 @@ class PushTDataCollector:
         max_steps_per_episode = 1000
         self.pending_action = None
 
-        # initial render
         self._render_and_show(info)
 
         while True:
@@ -322,7 +316,6 @@ class PushTDataCollector:
                     action_type, action = self.pending_action
                     self.pending_action = None
                 else:
-                    # still keep viewer alive
                     self._render_and_show(info)
                     continue
             else:
@@ -343,12 +336,18 @@ class PushTDataCollector:
                 print(f"Image observation saving: {'ON' if self.save_img_obs else 'OFF'}")
                 continue
             elif action_type == 'place':
+                if len(self.episode_data['observations']) == 0:
+                    print("No data to save. Please move the agent first.")
+                    continue
+                
                 success = self.is_successful_placement(observation, info)
                 if success:
                     self.successful_placements += 1
                     print("Successful placement! Saving data...")
                 else:
                     print("Placement not successful, but saving data anyway...")
+                
+                print(f"Saving episode with {len(self.episode_data['observations'])} steps...")
                 self.save_episode_data(self.episode_data, success)
                 self.episode_count += 1
                 observation, info = self.env.reset()
@@ -363,23 +362,14 @@ class PushTDataCollector:
                 observation, reward, terminated, truncated, info = self.env.step(action)
                 self.last_reward = float(reward)
                 
-                # Add small step-based reward component to ensure unique rewards
-                # This helps with imitation learning by providing step-by-step differentiation
                 step_reward_component = step_count * 1e-6  # Very small increment per step
                 unique_reward = self.last_reward + step_reward_component
-                
-                # Debug: print reward info for first few steps
-                if step_count < 10:
-                    print(f"Step {step_count}: original_reward={self.last_reward:.6f}, step_component={step_reward_component:.8f}, unique_reward={unique_reward:.6f}")
-
-                # Extract T position from observation
-                # PushT observation format: [agent_x, agent_y, block_x, block_y, block_angle]
+              
                 if len(observation) >= 4:
                     t_position = observation[2:4]  # block_x, block_y
                 else:
                     t_position = np.array([0.0, 0.0])  # fallback
 
-                # store
                 self.episode_data['observations'].append(observation.copy())
                 self.episode_data['actions'].append(action.copy())
                 self.episode_data['rewards'].append(unique_reward)
@@ -390,18 +380,18 @@ class PushTDataCollector:
                         img = self.env.render()
                         if img is not None:
                             self.episode_data['images'].append(img.copy())
-                    except Exception:
+                            if step_count < 5:  # Debug info for first few steps
+                                print(f"Step {step_count}: Saved image with shape {img.shape}")
+                    except Exception as e:
+                        print(f"Warning: Failed to save image at step {step_count}: {e}")
                         pass
 
                 step_count += 1
                 self.total_steps += 1
 
-                # fast viewer update (show original reward, not modified)
                 self._render_and_show(info)
 
-                # Check for success (reward = 1.0) - auto save and reset
-                # Use original reward for success check, not the modified unique_reward
-                if self.last_reward >= 1.0:
+                if self.last_reward >= 0.98:
                     print(f"Success! Reward: {self.last_reward:.3f} - Auto saving and resetting...")
                     self.successful_placements += 1
                     self.save_episode_data(self.episode_data, True)
@@ -431,7 +421,6 @@ class PushTDataCollector:
                     else:
                         break
 
-        # Cleanup
         if self.use_mouse and self.mouse_controller:
             self.mouse_controller.close()
         elif self.controller:
@@ -453,7 +442,7 @@ def main():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     parent_dir = os.path.dirname(current_dir)
     parser = argparse.ArgumentParser(description='PushT Data Collection for Imitation Learning')
-    parser.add_argument('--save_img_obs', action='store_true', help='Save simulation environment images to data')
+    parser.add_argument('--save_img_obs', action='store_true', default=True, help='Save simulation environment images to data (default: True)')
     parser.add_argument('--data_dir', type=str, default=os.path.join(parent_dir, 'episodes'),
                         help='Directory to save collected data')
     parser.add_argument('--mouse', action='store_true', help='Use mouse controller instead of keyboard')
